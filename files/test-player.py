@@ -86,8 +86,7 @@ def load_gif_frames(path, scale_factor=1.0):
             gif.seek(frame_num)
             # Convert to RGBA to preserve transparency
             frame_rgba = gif.convert('RGBA')
-            # Scale to reference size (normalize)
-            frame_resized = frame_rgba.resize((ref_w, ref_h), Image.Resampling.LANCZOS)
+            frame_resized = frame_rgba.resize((ref_w, ref_h), Image.Resampling.BILINEAR)
             frame_data = frame_resized.tobytes()
             frame_surface = pygame.image.fromstring(frame_data, (ref_w, ref_h), 'RGBA')
             frames.append(frame_surface)
@@ -130,7 +129,7 @@ def load_png_sequence_from_dir(dir_path, scale_factor=1.0, blur_radius=0):
                 pil_img = pil_img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
             new_w = int(pil_img.width * scale_factor)
             new_h = int(pil_img.height * scale_factor)
-            pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            pil_img = pil_img.resize((new_w, new_h), Image.Resampling.BILINEAR)
             frame = pygame.image.fromstring(pil_img.tobytes(), (new_w, new_h), 'RGBA')
             frames.append(frame)
         print(f"Cargado: {dir_path} ({len(frames)} frames)")
@@ -154,7 +153,7 @@ def load_specific_pngs(dir_path, filenames, scale_factor=1.0, blur_radius=0):
                 pil_img = pil_img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
             new_w = int(pil_img.width * scale_factor)
             new_h = int(pil_img.height * scale_factor)
-            pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            pil_img = pil_img.resize((new_w, new_h), Image.Resampling.BILINEAR)
             frame = pygame.image.fromstring(pil_img.tobytes(), (new_w, new_h), 'RGBA')
             frames.append(frame)
         except Exception as e:
@@ -168,6 +167,8 @@ AIR_ATTACK_FILES = ["p-t-ii.png"]
 
 # Swing flat frame sequence: sw-vii, sw-viii, sw-vi, sw-i, sw-viii, sw-vi, sw-v, sw-iv, sw-v
 SWING_SEQUENCE = [6, 7, 5, 0, 7, 5, 4, 3, 4]
+
+K_ROMAN = ["i", "ii", "iii", "iv", "v"]
 
 
 # Combo frame table: (name, duration, boost_y, burst_x, chargeable, charged_boost)
@@ -242,6 +243,24 @@ def ensure_animation(name, loader):
 # Load health icon (larger, 0.25 instead of 0.15)
 health_icon = load_single_image(HEALTH_ICON_PATH, 0.29)
 
+def _preload_all_animations():
+    import threading
+    def _worker():
+        for side in ["right", "left"]:
+            animations[f"climb-{side}"] = load_gif_frames(ANIMATION_PATHS[f"climb-{side}"], PLAYER_SCALE)
+            animations[f"wsh-{side}"] = load_gif_frames(ANIMATION_PATHS[f"wsh-{side}"], PLAYER_SCALE)
+            animations[f"punch-{side}"] = load_png_sequence_from_dir(ANIMATION_PATHS[f"punch-{side}"], PLAYER_SCALE)
+            animations[f"swing-{side}"] = load_png_sequence_from_dir(ANIMATION_PATHS[f"swing-{side}"], PLAYER_SCALE)
+            animations[f"air-attack-{side}"] = load_specific_pngs(ANIMATION_PATHS[f"punch-{side}"], AIR_ATTACK_FILES, PLAYER_SCALE)
+            for roman in K_ROMAN:
+                animations[f"pch-{roman}-{side}"] = load_gif_frames(os.path.join(ANIMATION_PATHS[f"pch-{side}"], f"pch-{roman}.gif"), PLAYER_SCALE)
+        animations["pch-right"] = load_png_sequence_from_dir(ANIMATION_PATHS["punch-right"], PLAYER_SCALE)
+        animations["pch-left"] = load_png_sequence_from_dir(ANIMATION_PATHS["punch-left"], PLAYER_SCALE)
+        print("All animations preloaded.")
+    threading.Thread(target=_worker, daemon=True).start()
+
+_preload_all_animations()
+
 class Player:
     def __init__(self):
         self.x = screen_width // 2
@@ -250,9 +269,9 @@ class Player:
         self.height = 90
         self.vel_x = 0
         self.vel_y = 0
-        self.base_speed = 3    # Velocidad base (lenta)
-        self.max_speed = 17    # Velocidad maxima (con tecla)
-        self.current_speed = 3   # Velocidad actual (interpolada)
+        self.base_speed = 4    # Velocidad base
+        self.max_speed = 25    # Velocidad maxima (con tecla)
+        self.current_speed = 4   # Velocidad actual (interpolada)
         self.acceleration = 0.8  # Suavidad de aceleracion
         self.gravity = 0.6
         self.jump_power = -30
@@ -418,12 +437,12 @@ class Player:
                 else:
                     # Horizontal movement while crouching (climb animation)
                     if moving_right and not moving_left and self.facing_right:
-                        self.vel_x = 12
+                        self.vel_x = 20
                         if self.current_animation != "climb-right":
                             self.current_animation = "climb-right"
                             self.frame_index = 0
                     elif moving_left and not moving_right and not self.facing_right:
-                        self.vel_x = -12
+                        self.vel_x = -20
                         if self.current_animation != "climb-left":
                             self.current_animation = "climb-left"
                             self.frame_index = 0
@@ -471,8 +490,8 @@ class Player:
                 self.current_speed += (self.base_speed - self.current_speed) * self.acceleration
                 self.vel_x = 0
             if not (self.current_animation.startswith("pch-") and (self.current_animation.endswith("-right") or self.current_animation.endswith("-left"))):
-                step = (self.k_step - 1) % 5 + 1
-                self.current_animation = f"pch-{step}-right" if self.facing_right else f"pch-{step}-left"
+                roman = K_ROMAN[(self.k_step - 1) % 5]
+                self.current_animation = f"pch-{roman}-right" if self.facing_right else f"pch-{roman}-left"
                 self.frame_index = 0
         
         # Normal movement
@@ -743,14 +762,14 @@ class Player:
         if self.is_k_punch and (self.current_animation.startswith("pch-") and (self.current_animation.endswith("-right") or self.current_animation.endswith("-left"))):
             if not animations.get(self.current_animation):
                 side = "right" if self.facing_right else "left"
-                step = self.current_animation.split("-")[1]
-                animations[self.current_animation] = load_gif_frames(os.path.join(ANIMATION_PATHS[f"pch-{side}"], f"pch-{step}.gif"), PLAYER_SCALE)
+                roman = self.current_animation.split("-")[1]
+                animations[self.current_animation] = load_gif_frames(os.path.join(ANIMATION_PATHS[f"pch-{side}"], f"pch-{roman}.gif"), PLAYER_SCALE)
             anim_frames = animations.get(self.current_animation, [])
             if not anim_frames:
                 self.is_k_punch = False
                 return
             self.k_frame_counter += 1
-            speed = 1 if "pch-2-" in self.current_animation else 2
+            speed = 1 if "pch-ii-" in self.current_animation else 2
             if self.k_frame_counter >= speed:
                 self.k_frame_counter = 0
                 if self.frame_index < len(anim_frames) - 1:
@@ -786,7 +805,8 @@ class Player:
             return
         
         self.frame_counter += 1
-        if self.frame_counter >= self.frame_delay:
+        delay = 2 if self.current_animation in ("run-right", "run-left") else self.frame_delay
+        if self.frame_counter >= delay:
             self.frame_counter = 0
             
             # Handle crouching animation (sit-center/sit-back transitions)
@@ -904,7 +924,8 @@ class Player:
         if name.endswith("-gif"):
             gif_n = cidx - 8  # 9→1, 10→2, ..., 13→5
             side = "right" if self.facing_right else "left"
-            gif_name = f"pch-{gif_n}-{side}"
+            roman = K_ROMAN[gif_n - 1]
+            gif_name = f"pch-{roman}-{side}"
             gif_frames = animations.get(gif_name, [])
             if not gif_frames:
                 self.combo_gif_active = False
@@ -1086,7 +1107,7 @@ while running:
             if event.key == pygame.K_2:
                 player.health = min(player.max_health, player.health + 10)
             # Golpe (F) — secuencia ordenada 0→1→2→...→8
-            if event.key == pygame.K_l and not player.is_crouching and not player.is_swinging and not player.is_blocking and not player.is_stealth and not player.is_k_punch:
+            if event.key == pygame.K_l and not player.is_crouching and not player.is_swinging and not player.is_blocking and not player.is_stealth and not player.is_k_punch and not player.is_web_shooting and not player.is_air_attacking:
                 if player.is_punching:
                     if player.combo_step >= player.total_combo_frames:
                         continue
@@ -1113,17 +1134,17 @@ while running:
                 player.combo_step += 1
             
             # K: ciclo pch-i → pch-v (GIF completo auto-play)
-            if event.key == pygame.K_k and not player.is_crouching and not player.is_swinging and not player.is_blocking and not player.is_stealth and not player.is_punching and not player.is_k_punch:
+            if event.key == pygame.K_k and not player.is_crouching and not player.is_swinging and not player.is_blocking and not player.is_stealth and not player.is_punching and not player.is_k_punch and not player.is_web_shooting and not player.is_air_attacking:
                 if player.on_ground:
                     player.is_k_punch = True
                     player.frame_index = 0
                     player.k_frame_counter = 0
-                    step = player.k_step + 1
-                    player.current_animation = f"pch-{step}-right" if player.facing_right else f"pch-{step}-left"
+                    roman = K_ROMAN[player.k_step]
+                    player.current_animation = f"pch-{roman}-right" if player.facing_right else f"pch-{roman}-left"
                     player.k_step = (player.k_step + 1) % 5
             
             # G: w-i (golpe pesado especial)
-            if event.key == pygame.K_p and player.on_ground and not player.is_crouching and not player.is_swinging and not player.is_blocking and not player.is_stealth and not player.is_k_punch and player.combo_step < player.total_combo_frames:
+            if event.key == pygame.K_p and player.on_ground and not player.is_crouching and not player.is_swinging and not player.is_blocking and not player.is_stealth and not player.is_k_punch and not player.is_web_shooting and not player.is_air_attacking and player.combo_step < player.total_combo_frames:
                 if not player.is_punching:
                     player.is_punching = True
                     player.current_animation = "punch-right" if player.facing_right else "punch-left"
@@ -1131,7 +1152,7 @@ while running:
                 player.combo_step += 1
 
             # R: Web-shooter
-            if event.key == pygame.K_o and player.on_ground and not player.is_punching and not player.is_swinging and not player.is_crouching and not player.is_web_shooting and not player.is_blocking and not player.is_stealth:
+            if event.key == pygame.K_o and player.on_ground and not player.is_punching and not player.is_swinging and not player.is_crouching and not player.is_web_shooting and not player.is_blocking and not player.is_stealth and not player.is_k_punch and not player.is_air_attacking:
                 player.is_web_shooting = True
                 player.frame_index = 0
                 player.current_animation = "wsh-right" if player.facing_right else "wsh-left"
@@ -1162,7 +1183,7 @@ while running:
                     player.frame_index = 0
 
             # E: Swing — advance frame; if already swinging, hop + re-swing
-            if event.key == pygame.K_i and not player.is_crouching and not player.is_punching and not player.is_k_punch and not player.is_blocking and not player.is_stealth and player.swing_hop_timer == 0:
+            if event.key == pygame.K_i and not player.is_crouching and not player.is_punching and not player.is_k_punch and not player.is_blocking and not player.is_stealth and not player.is_web_shooting and not player.is_air_attacking and player.swing_hop_timer == 0:
                 player.swing_seq_pos = (player.swing_seq_pos + 1) % len(SWING_SEQUENCE)
                 frame_idx = SWING_SEQUENCE[player.swing_seq_pos]
                 player.frame_index = frame_idx
