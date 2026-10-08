@@ -13,6 +13,7 @@ except Exception:
     pass
 
 import asset_manager
+from webcompat import IS_WEB, frame_pace, load_font
 
 ORIG_W, ORIG_H = 1920, 1080
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,7 +40,7 @@ def main_loop(s, sw, sh):
         pygame.display.set_icon(_img("images-game/game-icon/icon.png"))
     except:
         pass
-    font = pygame.font.SysFont("arial", 24, bold=True)
+    font = load_font(24, bold=True) or pygame.font.SysFont("arial", 24, bold=True)
     press_surf = font.render("PRESS ", True, WHITE)
     to_surf = font.render(" TO START", True, WHITE)
     key_scaled = pygame.transform.scale(enter_key, (100, 46))
@@ -55,14 +56,26 @@ def main_loop(s, sw, sh):
         web_snd.set_volume(0.6)
         laugh_snd = pygame.mixer.Sound(os.path.join(BASE_DIR, "sound-game", "laught.mp3"))
         laugh_snd.set_volume(0.6)
-    except:
+    except Exception:
         web_snd = laugh_snd = None
 
     try:
         import costumes
-        import threading
-        threading.Thread(target=costumes.load_fast, args=(screen, w, h), daemon=True).start()
-    except:
+        if not IS_WEB:
+            import threading
+            threading.Thread(target=costumes.load_fast, args=(screen, w, h), daemon=True).start()
+        else:
+            try:
+                import asyncio
+                async def _pre():
+                    costumes.load_fast(screen, w, h)
+                try:
+                    asyncio.get_event_loop().run_until_complete(_pre())
+                except Exception:
+                    costumes.load_fast(screen, w, h)
+            except Exception:
+                costumes.load_fast(screen, w, h)
+    except Exception:
         pass
 
     theme = "sun"
@@ -77,6 +90,7 @@ def main_loop(s, sw, sh):
 
     while running:
         now = pygame.time.get_ticks()
+        dt = frame_pace(clock, target_fps=60)
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 asset_manager.close_video()

@@ -2,12 +2,20 @@ import pygame
 import os
 import sys
 import time
-from ffpyplayer.player import MediaPlayer
+
+from webcompat import IS_WEB
+if not IS_WEB:
+    from ffpyplayer.player import MediaPlayer
+else:
+    MediaPlayer = None
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VIDEO = os.path.join(BASE_DIR, "intro-video", "intro-0noxtackore.mp4")
 
 def play_intro():
+    return _play_intro_sync()
+
+def _play_intro_sync():
     screen = pygame.display.get_surface()
     if screen is None:
         pygame.init()
@@ -18,6 +26,52 @@ def play_intro():
         pygame.display.set_caption("Spider-Man - Brand New Day")
     else:
         sw, sh = screen.get_size()
+
+    if IS_WEB:
+        try:
+            import platform
+            w = getattr(platform, "window", None)
+            if w is not None:
+                vid = w.document.createElement("video")
+                vid.src = VIDEO.replace("\\", "/")
+                vid.setAttribute("preload", "auto")
+                vid.setAttribute("muted", "muted")
+                vid.setAttribute("playsinline", "true")
+                vid.style.position = "absolute"
+                vid.style.left = "0"
+                vid.style.top = "0"
+                vid.style.width = "100vw"
+                vid.style.height = "100vh"
+                vid.style.objectFit = "cover"
+                vid.style.zIndex = "10"
+                vid.autoplay = True
+                w.document.body.appendChild(vid)
+                _dom_vid = vid
+
+                def _wait():
+                    import asyncio
+                    loop = asyncio.get_event_loop()
+                    while not getattr(vid, "ended", False):
+                        loop.run_until_complete(asyncio.sleep(0.016))
+                        for e in pygame.event.get():
+                            if e.type == pygame.QUIT or (e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE):
+                                try:
+                                    vid.pause()
+                                    vid.src = ""
+                                    w.document.body.removeChild(vid)
+                                except Exception:
+                                    pass
+                                return
+                    try:
+                        vid.pause()
+                        w.document.body.removeChild(vid)
+                    except Exception:
+                        pass
+
+                _wait()
+                return screen
+        except Exception:
+            pass
 
     player = MediaPlayer(VIDEO)
     player.set_pause(False)

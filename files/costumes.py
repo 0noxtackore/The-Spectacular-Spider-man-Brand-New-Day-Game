@@ -1,14 +1,20 @@
 import pygame
 import sys
 import os
-import threading
-from PIL import Image
+
+from webcompat import IS_WEB, load_gif_frames as _wg_frames
+
+if not IS_WEB:
+    import threading
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(BASE_DIR, "images-game", "costumes-section")
 ORIG_W, ORIG_H = 1920, 1080
 
-import asset_manager
+try:
+    import asset_manager  # desktop compatibility only
+except Exception:
+    asset_manager = None
 
 
 def load_png(path, w, h, do_scale=True):
@@ -24,34 +30,51 @@ def load_png(path, w, h, do_scale=True):
 
 
 def crop_content(surf):
+    try:
+        import pygame
+    except Exception:
+        return surf, None
+    if IS_WEB:
+        from webcompat import bbox_pygame_mask
+        bb = bbox_pygame_mask(surf)
+        if not bb:
+            return surf, None
+        left, top, right, bottom = bb
+        w, h = surf.get_size()
+        if left < 0:
+            left = 0
+        if top < 0:
+            top = 0
+        if right > w:
+            right = w
+        if bottom > h:
+            bottom = h
+        cw, ch = max(1, right - left), max(1, bottom - top)
+        subs = surf.subsurface((left, top, cw, ch)).copy()
+        return subs, (left, top, right, bottom)
     w, h = surf.get_size()
-    raw = pygame.image.tostring(surf, "RGBA")
+    raw = pygame.image.tobytes(surf, "RGBA")
+    try:
+        from PIL import Image
+    except Exception:
+        return surf, None
     pil_img = Image.frombytes("RGBA", (w, h), raw)
     bbox = pil_img.getbbox()
     if not bbox:
         return surf, None
     cropped = pil_img.crop(bbox)
     raw2 = cropped.tobytes()
-    return pygame.image.fromstring(raw2, cropped.size, "RGBA"), bbox
+    return pygame.image.frombuffer(raw2, cropped.size, "RGBA"), bbox
 
 
 def _load_gif_frames(gif_path, target_w, target_h, speed=1.0):
-    gif = Image.open(gif_path)
-    n = getattr(gif, "n_frames", 1)
-    frames = []
-    durations = []
-    for i in range(n):
-        gif.seek(i)
-        dur = gif.info.get("duration", 40)
-        durations.append(max(dur * speed, 1))
-        frame = gif.convert("RGBA")
-        raw = frame.tobytes()
-        pw, ph = frame.size
-        surf = pygame.image.frombuffer(raw, (pw, ph), "RGBA")
-        if (pw, ph) != (target_w, target_h):
-            surf = pygame.transform.scale(surf, (target_w, target_h))
-        frames.append(surf)
-    return frames, durations
+    frames, durs = _wg_frames(gif_path, target_size=(target_w, target_h))
+    if speed != 1.0 and durs:
+        nd = []
+        for d in durs:
+            nd.append(max(int(d * speed), 1))
+        durs = nd
+    return frames, durs
 
 
 SUIT_BBOXES = {
@@ -67,7 +90,14 @@ SUIT_BBOXES = {
 }
 
 _assets = {}
-_load_event = threading.Event()
+_load_event = None
+if not IS_WEB:
+    try:
+        _load_event = threading.Event()
+    except Exception:
+        _load_event = None
+else:
+    _load_event = None
 
 
 def load_fast(screen, w, h):
@@ -140,7 +170,11 @@ def load_fast(screen, w, h):
         "ctrl_data": ctrl, "cx": w - 20 - tw, "cy": h - 20,
         "qf": qf, "qt": qt, "of": of, "icon": icon, "sfx": sfx,
     }
-    _load_event.set()
+    if _load_event is not None:
+        try:
+            _load_event.set()
+        except Exception:
+            pass
 
 
 def load_assets(screen, w, h):
@@ -187,7 +221,11 @@ def _render_pose_overlay(screen, shadow_frames, pose_frames, shadow_idx, pose_id
 
 def main_loop(screen, screen_width, screen_height):
     global _assets
-    _load_event.wait()
+    if _load_event is not None:
+        try:
+            _load_event.wait()
+        except Exception:
+            pass
     a = _assets
     w, h = screen_width, screen_height
 
